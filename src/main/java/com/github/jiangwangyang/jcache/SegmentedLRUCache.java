@@ -10,7 +10,7 @@ public class SegmentedLRUCache<K, V> implements JCache<K, V> {
 
     static final int HASH_BITS = 0x7fffffff;
     private final Map<K, Node<K, V>> map;
-    private final SegmentedLRU<K, V>[] segmentedLRUS;
+    private final SegmentedLruQueue<K, V>[] segmentedLruQueues;
     private final LongAdder requestCount = new LongAdder();
     private final LongAdder hitCount = new LongAdder();
     private final long startTime;
@@ -29,16 +29,16 @@ public class SegmentedLRUCache<K, V> implements JCache<K, V> {
         int segmentHotCapacity = (int) (segmentCapacity * hotRatio);
         int segmentColdCapacity = segmentCapacity - segmentHotCapacity;
         this.map = new ConcurrentHashMap<>(segmentNum * segmentCapacity << 1);
-        this.segmentedLRUS = new SegmentedLRU[segmentNum];
+        this.segmentedLruQueues = new SegmentedLruQueue[segmentNum];
         for (int i = 0; i < segmentNum; i++) {
-            segmentedLRUS[i] = new SegmentedLRU<>(segmentHotCapacity, segmentColdCapacity);
+            segmentedLruQueues[i] = new SegmentedLruQueue<>(segmentHotCapacity, segmentColdCapacity);
         }
         startTime = System.currentTimeMillis();
     }
 
-    private SegmentedLRU<K, V> getSegmentedLRU(K key) {
+    private SegmentedLruQueue<K, V> getSegmentedLruQueue(K key) {
         int h = key.hashCode();
-        return segmentedLRUS[((h ^ (h >>> 16)) & HASH_BITS) % segmentedLRUS.length];
+        return segmentedLruQueues[((h ^ (h >>> 16)) & HASH_BITS) % segmentedLruQueues.length];
     }
 
     private Node<K, V> getNodeIfPresent(K key) {
@@ -49,88 +49,81 @@ public class SegmentedLRUCache<K, V> implements JCache<K, V> {
         }
         if (node.expireTime <= System.currentTimeMillis()) {
             map.remove(key, node);
+            node.key = null;
+            node.value = null;
             return null;
         }
-        getSegmentedLRU(key).updateNode(node);
+        getSegmentedLruQueue(key).updateNode(node);
         hitCount.increment();
         return node;
     }
 
     @Override
     public V get(K key, long minExpireMillis, long maxExpireMillis, Function<K, V> loadValueFunction) {
-        if (key == null) {
-            throw new IllegalArgumentException("key must not be null");
-        }
-        if (minExpireMillis < 0 || maxExpireMillis < 0) {
-            throw new IllegalArgumentException("minExpireMillis and maxExpireMillis must be greater than 0");
-        }
-        if (maxExpireMillis < minExpireMillis) {
-            throw new IllegalArgumentException("maxExpireMillis must be greater than minExpireMillis");
-        }
-        if (loadValueFunction == null) {
-            throw new IllegalArgumentException("loadValueFunction must not be null");
-        }
+        assert key != null;
+        assert loadValueFunction != null;
+        assert minExpireMillis >= 0;
+        assert maxExpireMillis >= 0;
+        assert minExpireMillis <= maxExpireMillis;
         Node<K, V> node = getNodeIfPresent(key);
         if (node != null) {
             return node.value;
         }
-        requestCount.increment();
-        SegmentedLRU<K, V> segmentedLRU = getSegmentedLRU(key);
+        SegmentedLruQueue<K, V> segmentedLruQueue = getSegmentedLruQueue(key);
         Node<K, V>[] removedNodeWrapper = new Node[1];
         boolean[] executedWrapper = new boolean[1];
         node = map.computeIfAbsent(key, (_k) -> {
             executedWrapper[0] = true;
-            Node<K, V> newNode = new Node<>(key, loadValueFunction.apply(key), System.currentTimeMillis() +
-                    (minExpireMillis == maxExpireMillis ? minExpireMillis : ThreadLocalRandom.current().nextLong(minExpireMillis, maxExpireMillis)));
-            removedNodeWrapper[0] = segmentedLRU.addNodeAndRemoveTailIfFull(newNode);
+            Node<K, V> newNode = new Node<>(key, loadValueFunction.apply(key), System.currentTimeMillis()
+                    + ThreadLocalRandom.current().nextLong(minExpireMillis, maxExpireMillis + 1));
+            removedNodeWrapper[0] = segmentedLruQueue.addNodeAndRemoveTail(newNode);
             return newNode;
         });
-        if (removedNodeWrapper[0] != null) {
+        if (executedWrapper[0] && removedNodeWrapper[0].key != null) {
             map.remove(removedNodeWrapper[0].key, removedNodeWrapper[0]);
+            removedNodeWrapper[0].key = null;
+            removedNodeWrapper[0].value = null;
         }
         if (!executedWrapper[0]) {
-            segmentedLRU.updateNode(node);
-            hitCount.increment();
+            segmentedLruQueue.updateNode(node);
         }
         return node.value;
     }
 
     @Override
     public V getIfPresent(K key) {
-        if (key == null) {
-            throw new IllegalArgumentException("key must not be null");
-        }
+        assert key != null;
         Node<K, V> node = getNodeIfPresent(key);
         return node == null ? null : node.value;
     }
 
     @Override
     public void put(K key, V value, long minExpireMillis, long maxExpireMillis) {
-        if (key == null) {
-            throw new IllegalArgumentException("key must not be null");
-        }
-        if (minExpireMillis < 0 || maxExpireMillis < 0) {
-            throw new IllegalArgumentException("minExpireMillis and maxExpireMillis must be greater than 0");
-        }
-        if (maxExpireMillis < minExpireMillis) {
-            throw new IllegalArgumentException("maxExpireMillis must be greater than minExpireMillis");
-        }
-        SegmentedLRU<K, V> segmentedLRU = getSegmentedLRU(key);
-        Node<K, V> newNode = new Node<>(key, value, System.currentTimeMillis() +
-                (minExpireMillis == maxExpireMillis ? minExpireMillis : ThreadLocalRandom.current().nextLong(minExpireMillis, maxExpireMillis)));
-        Node<K, V> removedNode = segmentedLRU.addNodeAndRemoveTailIfFull(newNode);
-        if (removedNode != null) {
+        assert key != null;
+        assert minExpireMillis >= 0;
+        assert maxExpireMillis >= 0;
+        assert minExpireMillis <= maxExpireMillis;
+        SegmentedLruQueue<K, V> segmentedLruQueue = getSegmentedLruQueue(key);
+        Node<K, V> newNode = new Node<>(key, value, System.currentTimeMillis()
+                + ThreadLocalRandom.current().nextLong(minExpireMillis, maxExpireMillis + 1));
+        Node<K, V> removedNode = segmentedLruQueue.addNodeAndRemoveTail(newNode);
+        if (removedNode.key != null) {
             map.remove(removedNode.key, removedNode);
+            removedNode.key = null;
+            removedNode.value = null;
         }
         map.put(key, newNode);
     }
 
     @Override
     public void remove(K key) {
-        if (key == null) {
-            throw new IllegalArgumentException("key must not be null");
+        assert key != null;
+        Node<K, V> node = map.get(key);
+        if (node != null) {
+            map.remove(key, node);
+            node.key = null;
+            node.value = null;
         }
-        map.remove(key);
     }
 
     @Override
@@ -145,112 +138,111 @@ public class SegmentedLRUCache<K, V> implements JCache<K, V> {
         REMOVED
     }
 
-    static class SegmentedLRU<K, V> {
-        final LinkedQueue<K, V> hotQueue;
-        final LinkedQueue<K, V> coldQueue;
+    static class SegmentedLruQueue<K, V> {
+        Node<K, V> hotHead;
+        Node<K, V> hotTail;
+        Node<K, V> coldHead;
+        Node<K, V> coldTail;
 
-        SegmentedLRU(int hotQueueCapacity, int coldQueueCapacity) {
-            this.hotQueue = new LinkedQueue<>(hotQueueCapacity);
-            this.coldQueue = new LinkedQueue<>(coldQueueCapacity);
+        SegmentedLruQueue(int hotQueueCapacity, int coldQueueCapacity) {
+            assert hotQueueCapacity > 0;
+            assert coldQueueCapacity > 0;
+            hotHead = hotTail = new Node<>(null, null, 0);
+            coldHead = coldTail = new Node<>(null, null, 0);
+            for (int i = 1; i < hotQueueCapacity; i++) {
+                addHotHead(new Node<>(null, null, 0));
+            }
+            for (int i = 1; i < coldQueueCapacity; i++) {
+                addColdHead(new Node<>(null, null, 0));
+            }
         }
 
-        Node<K, V> addNodeAndRemoveTailIfFull(Node<K, V> node) {
-            if (node.status != NodeStatus.INITIAL) {
-                throw new RuntimeException("node status is not initial");
-            }
+        Node<K, V> addNodeAndRemoveTail(Node<K, V> node) {
+            assert node != null;
             synchronized (this) {
-                if (node.status != NodeStatus.INITIAL) {
-                    throw new RuntimeException("node status is not initial");
-                }
+                assert node.key != null;
+                assert node.status == NodeStatus.INITIAL;
                 node.status = NodeStatus.COLD;
-                node = coldQueue.addNodeToHeadAndRemoveTailIfFull(node);
-                if (node != null) {
-                    node.status = NodeStatus.REMOVED;
-                }
-                return node;
+                addColdHead(node);
+                Node<K, V> removedNode = removeColdTail();
+                removedNode.status = NodeStatus.REMOVED;
+                return removedNode;
             }
         }
 
         void updateNode(Node<K, V> node) {
-            if (node.status == NodeStatus.INITIAL) {
-                throw new RuntimeException("node status is initial");
-            }
+            assert node != null;
             if (node.status == NodeStatus.HOT || node.status == NodeStatus.REMOVED) {
                 return;
             }
             synchronized (this) {
-                if (node.status == NodeStatus.INITIAL) {
-                    throw new RuntimeException("node status is initial");
-                }
                 if (node.status == NodeStatus.HOT || node.status == NodeStatus.REMOVED) {
                     return;
                 }
-                node = coldQueue.removeNode(node);
-                if (node == null) {
-                    throw new RuntimeException("node is null");
-                }
+                assert node.key != null;
+                assert node.status != NodeStatus.INITIAL;
+                removeColdNode(node);
                 node.status = NodeStatus.HOT;
-                node = hotQueue.addNodeToHeadAndRemoveTailIfFull(node);
-                if (node == null) {
-                    return;
-                }
+                addHotHead(node);
+                node = removeHotTail();
                 node.status = NodeStatus.COLD;
-                node = coldQueue.addNodeToHeadAndRemoveTailIfFull(node);
-            }
-            if (node != null) {
-                throw new RuntimeException("node is not null");
+                addColdHead(node);
             }
         }
-    }
 
-    static class LinkedQueue<K, V> {
-        final int capacity;
-        int size = 0;
-        Node<K, V> head;
-        Node<K, V> tail;
-
-        LinkedQueue(int capacity) {
-            this.capacity = capacity;
+        private void addHotHead(Node<K, V> node) {
+            assert node != null;
+            node.next = hotHead;
+            hotHead.prev = node;
+            hotHead = node;
         }
 
-        Node<K, V> addNodeToHeadAndRemoveTailIfFull(Node<K, V> node) {
-            if (size == 0) {
-                head = node;
-                tail = node;
-            } else {
-                head.prev = node;
-                node.next = head;
-                head = node;
-            }
-            size++;
-            if (size > capacity) {
-                return removeNode(tail);
-            }
-            return null;
+        private void addColdHead(Node<K, V> node) {
+            assert node != null;
+            node.next = coldHead;
+            coldHead.prev = node;
+            coldHead = node;
         }
 
-        Node<K, V> removeNode(Node<K, V> node) {
-            if (node == head) {
-                head = node.next;
+        private Node<K, V> removeHotTail() {
+            Node<K, V> ct = hotTail;
+            ct.prev.next = null;
+            hotTail = ct.prev;
+            ct.prev = null;
+            return ct;
+        }
+
+        private Node<K, V> removeColdTail() {
+            Node<K, V> ct = coldTail;
+            ct.prev.next = null;
+            coldTail = ct.prev;
+            ct.prev = null;
+            return ct;
+        }
+
+        private void removeColdNode(Node<K, V> node) {
+            assert node != null;
+            assert node != hotHead;
+            assert node != hotTail;
+            if (node == coldHead) {
+                coldHead = node.next;
             } else {
                 node.prev.next = node.next;
             }
-            if (node == tail) {
-                tail = node.prev;
+            if (node == coldTail) {
+                coldTail = node.prev;
             } else {
                 node.next.prev = node.prev;
             }
             node.prev = null;
             node.next = null;
-            size--;
-            return node;
         }
     }
 
     static class Node<K, V> {
-        final K key;
-        final V value;
         final long expireTime;
+        K key;
+        V value;
         NodeStatus status = NodeStatus.INITIAL;
         Node<K, V> prev;
         Node<K, V> next;
