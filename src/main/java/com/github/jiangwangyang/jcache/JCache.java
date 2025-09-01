@@ -4,7 +4,7 @@ import java.util.function.Function;
 
 public interface JCache<K, V> {
 
-    V get(K key, long minExpireMillis, long maxExpireMillis, Function<K, V> loadValueFunction);
+    V get(K key, Function<K, V> loadValueFunction, long minExpireMillis, long maxExpireMillis);
 
     V getIfPresent(K key);
 

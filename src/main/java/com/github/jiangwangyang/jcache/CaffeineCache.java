@@ -8,12 +8,12 @@ import java.time.Duration;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Function;
 
-public class CaffeineWrapper<K, V> implements JCache<K, V> {
+public class CaffeineCache<K, V> implements JCache<K, V> {
 
     final Cache<K, ValueWrapper<V>> caffeineCache;
     final long startMillis;
 
-    public CaffeineWrapper(int capacity) {
+    public CaffeineCache(int capacity) {
         assert capacity > 0;
         this.caffeineCache = Caffeine.newBuilder()
                 .initialCapacity(capacity)
@@ -40,7 +40,7 @@ public class CaffeineWrapper<K, V> implements JCache<K, V> {
     }
 
     @Override
-    public V get(K key, long minExpireMillis, long maxExpireMillis, Function<K, V> loadValueFunction) {
+    public V get(K key, Function<K, V> loadValueFunction, long minExpireMillis, long maxExpireMillis) {
         assert key != null;
         assert loadValueFunction != null;
         assert minExpireMillis >= 0;

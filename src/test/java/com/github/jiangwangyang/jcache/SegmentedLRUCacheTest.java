@@ -17,7 +17,7 @@ public class SegmentedLRUCacheTest {
     @Test
     void testGetSetRemoveExpire() throws InterruptedException {
         JCache<Object, Object> cache = new SegmentedLRUCache<>(100, 10, 0.2);
-        assertEquals(1, cache.get(1, 100, 100, (key -> key)));
+        assertEquals(1, cache.get(1, key -> key, 100, 100));
         assertEquals(1, cache.getIfPresent(1));
         cache.remove(1);
         assertNull(cache.getIfPresent(1));
@@ -25,7 +25,7 @@ public class SegmentedLRUCacheTest {
         assertEquals(1, cache.getIfPresent(1));
         cache.remove(1);
         assertNull(cache.getIfPresent(1));
-        assertEquals(1, cache.get(1, 100, 100, (key -> key)));
+        assertEquals(1, cache.get(1, key -> key, 100, 100));
         Thread.sleep(150);
         assertNull(cache.getIfPresent(1));
     }
@@ -33,10 +33,10 @@ public class SegmentedLRUCacheTest {
     @Test
     void testCapacity() {
         JCache<Object, Object> cache = new SegmentedLRUCache<>(10, 1, 0.2);
-        cache.get(2, 100, 100, key -> key);
-        cache.get(3, 100, 100, key -> key);
+        cache.get(2, key -> key, 100, 100);
+        cache.get(3, key -> key, 100, 100);
         for (int i = 0; i < 100; i++) {
-            cache.get(i, 60000, 60000, (key -> key));
+            cache.get(i, key -> key, 60000, 60000);
         }
         assertEquals(10, cache.stats().size());
         for (int i = 0; i < 100; i++) {
@@ -58,7 +58,7 @@ public class SegmentedLRUCacheTest {
         List<Callable<Void>> taskList = new ArrayList<>(100);
         for (int i = 0; i < 100; i++) {
             taskList.add(() -> {
-                cache.get(1, 60000, 60000, (key -> {
+                cache.get(1, key -> {
                     atomicInteger.getAndIncrement();
                     try {
                         Thread.sleep(100);
@@ -66,7 +66,7 @@ public class SegmentedLRUCacheTest {
                         throw new RuntimeException(e);
                     }
                     return null;
-                }));
+                }, 60000, 60000);
                 return null;
             });
         }
@@ -83,7 +83,9 @@ public class SegmentedLRUCacheTest {
         for (int i = 0; i < 100; i++) {
             taskList.add(() -> {
                 for (int j = 0; j < 1000; j++) {
-                    Integer value = cache.get(ThreadLocalRandom.current().nextInt(100), 100, 200, (key -> key));
+                    Integer value = cache.get(ThreadLocalRandom.current().nextInt(100),
+                            key -> key,
+                            100, 200);
                     assertNotNull(value);
                 }
                 return null;

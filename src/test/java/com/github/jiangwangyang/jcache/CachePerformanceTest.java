@@ -23,7 +23,7 @@ public class CachePerformanceTest {
 
     @Test
     void testCaffeinePerformance() throws InterruptedException {
-        testPerformance(new CaffeineWrapper<>(10000));
+        testPerformance(new CaffeineCache<>(10000));
     }
 
     private void testPerformance(JCache<Integer, Integer> cache) throws InterruptedException {
@@ -34,7 +34,7 @@ public class CachePerformanceTest {
                 for (; ; ) {
                     Integer key = ThreadLocalRandom.current().nextInt(100) < HOT_PERCENT ?
                             1 : ThreadLocalRandom.current().nextInt();
-                    cache.get(key, MIN_EXPIRE_MILLIS, MAX_EXPIRE_MILLIS, k -> {
+                    cache.get(key, k -> {
                         if (IO_MILLIS > 0) {
                             try {
                                 Thread.sleep(IO_MILLIS);
@@ -43,7 +43,7 @@ public class CachePerformanceTest {
                             }
                         }
                         return k;
-                    });
+                    }, MIN_EXPIRE_MILLIS, MAX_EXPIRE_MILLIS);
                     longAdder.increment();
                 }
             });

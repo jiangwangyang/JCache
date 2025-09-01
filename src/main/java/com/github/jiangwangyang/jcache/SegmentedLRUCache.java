@@ -57,7 +57,7 @@ public class SegmentedLRUCache<K, V> implements JCache<K, V> {
     }
 
     @Override
-    public V get(K key, long minExpireMillis, long maxExpireMillis, Function<K, V> loadValueFunction) {
+    public V get(K key, Function<K, V> loadValueFunction, long minExpireMillis, long maxExpireMillis) {
         assert key != null;
         assert loadValueFunction != null;
         assert minExpireMillis >= 0;
