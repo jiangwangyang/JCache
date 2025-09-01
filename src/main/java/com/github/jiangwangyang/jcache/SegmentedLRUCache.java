@@ -49,8 +49,6 @@ public class SegmentedLRUCache<K, V> implements JCache<K, V> {
         }
         if (node.expireTime <= System.currentTimeMillis()) {
             map.remove(key, node);
-            node.key = null;
-            node.value = null;
             return null;
         }
         getSegmentedLruQueue(key).updateNode(node);
@@ -81,8 +79,6 @@ public class SegmentedLRUCache<K, V> implements JCache<K, V> {
         });
         if (executedWrapper[0] && removedNodeWrapper[0].key != null) {
             map.remove(removedNodeWrapper[0].key, removedNodeWrapper[0]);
-            removedNodeWrapper[0].key = null;
-            removedNodeWrapper[0].value = null;
         }
         if (!executedWrapper[0]) {
             segmentedLruQueue.updateNode(node);
@@ -109,8 +105,6 @@ public class SegmentedLRUCache<K, V> implements JCache<K, V> {
         Node<K, V> removedNode = segmentedLruQueue.addNodeAndRemoveTail(newNode);
         if (removedNode.key != null) {
             map.remove(removedNode.key, removedNode);
-            removedNode.key = null;
-            removedNode.value = null;
         }
         map.put(key, newNode);
     }
@@ -121,8 +115,6 @@ public class SegmentedLRUCache<K, V> implements JCache<K, V> {
         Node<K, V> node = map.get(key);
         if (node != null) {
             map.remove(key, node);
-            node.key = null;
-            node.value = null;
         }
     }
 
@@ -241,8 +233,8 @@ public class SegmentedLRUCache<K, V> implements JCache<K, V> {
 
     static class Node<K, V> {
         final long expireTime;
-        K key;
-        V value;
+        final K key;
+        final V value;
         NodeStatus status = NodeStatus.INITIAL;
         Node<K, V> prev;
         Node<K, V> next;
